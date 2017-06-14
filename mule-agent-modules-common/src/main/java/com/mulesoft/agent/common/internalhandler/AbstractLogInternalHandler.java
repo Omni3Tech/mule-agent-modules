@@ -1,17 +1,20 @@
 package com.mulesoft.agent.common.internalhandler;
 
-import java.io.Serializable;
-import java.nio.charset.Charset;
-
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.mulesoft.agent.exception.AgentEnableOperationException;
+import com.mulesoft.agent.buffer.BufferConfiguration;
+import com.mulesoft.agent.buffer.BufferExhaustedAction;
+import com.mulesoft.agent.buffer.BufferType;
+import com.mulesoft.agent.buffer.BufferedHandler;
 import com.mulesoft.agent.common.internalhandler.serializer.DefaultObjectMapperFactory;
 import com.mulesoft.agent.configuration.Configurable;
-import com.mulesoft.agent.configuration.PostConfigure;
 import com.mulesoft.agent.configuration.Type;
 import com.mulesoft.agent.handlers.InitializableInternalMessageHandler;
 import com.mulesoft.agent.handlers.exception.InitializationException;
 import com.mulesoft.agent.services.OnOffSwitch;
+
+import java.io.Serializable;
+import java.nio.charset.Charset;
+import java.util.Collection;
 
 import org.apache.logging.log4j.Level;
 import org.apache.logging.log4j.LogManager;
@@ -28,17 +31,16 @@ import org.apache.logging.log4j.core.config.Configuration;
 import org.apache.logging.log4j.core.config.LoggerConfig;
 import org.apache.logging.log4j.core.layout.PatternLayout;
 
-/**
- * Abstract log internal handler.
- *
- * @param <T> Message type.
- */
-public abstract class AbstractLogInternalHandler<T> implements InitializableInternalMessageHandler<T>
+public abstract class AbstractLogInternalHandler<T extends Serializable> extends BufferedHandler<T> implements InitializableInternalMessageHandler<T>
 {
     private static final Logger LOGGER = LogManager.getLogger(AbstractLogInternalHandler.class);
     public static final String MULE_HOME_PLACEHOLDER = "$MULE_HOME";
     public static final String PATTERN_LAYOUT = "%m%n";
     public static final int MB_CONVERSION_UNIT = 1024;
+    private static final int DEFAULT_BUFFER_RETRY_COUNT = 3;
+    private static final long DEFAULT_BUFFER_FLUSH_FREQUENCY = 10000L;
+    private static final int DEFAULT_BUFFER_MAXIMUM_CAPACITY = 1000;
+    private static final boolean DEFAULT_DISCARD_ON_FAILURE = false;
 
     private String className = this.getClass().getName();
     private String loggerName = className + "." + "logger";
@@ -117,44 +119,48 @@ public abstract class AbstractLogInternalHandler<T> implements InitializableInte
         return this.objectMapper;
     }
 
-    public void enable(boolean state)
-            throws AgentEnableOperationException
+    @Override
+    protected boolean canHandle(T t)
     {
-        this.enabledSwitch.switchTo(state);
-    }
-
-    public boolean isEnabled()
-    {
-        return this.enabledSwitch.isEnabled();
+        return true;
     }
 
     @Override
-    public boolean handle(T message)
+    public BufferConfiguration getBuffer()
     {
-        if (this.isEnabled())
+        if (buffer != null)
         {
-            try
-            {
-                String serialized = this.objectMapper.writeValueAsString(message);
-
-                this.internalLogger.info(serialized);
-                return true;
-            }
-            catch (Exception e)
-            {
-                LOGGER.error("There was an error logging the object.", e);
-                return false;
-            }
+            return buffer;
         }
-        return false;
+        else
+        {
+            BufferConfiguration defaultBuffer = new BufferConfiguration();
+            defaultBuffer.setType(BufferType.MEMORY);
+            defaultBuffer.setRetryCount(DEFAULT_BUFFER_RETRY_COUNT);
+            defaultBuffer.setFlushFrequency(DEFAULT_BUFFER_FLUSH_FREQUENCY);
+            defaultBuffer.setMaximumCapacity(DEFAULT_BUFFER_MAXIMUM_CAPACITY);
+            defaultBuffer.setDiscardMessagesOnFlushFailure(DEFAULT_DISCARD_ON_FAILURE);
+            defaultBuffer.setWhenExhausted(BufferExhaustedAction.FLUSH);
+            return defaultBuffer;
+        }
     }
 
-    @PostConfigure
-    public void postConfigurable()
+    @Override
+    protected boolean flush(Collection<T> collection)
     {
-        if (this.enabledSwitch == null)
+        try
         {
-            this.enabledSwitch = OnOffSwitch.newNullSwitch(this.enabled);
+            for (T message : collection)
+            {
+                String serialized = this.objectMapper.writeValueAsString(message);
+                this.internalLogger.info(serialized);
+            }
+            return true;
+        }
+        catch (Exception e)
+        {
+            LOGGER.error("There was an error logging the object.", e);
+            return false;
         }
     }
 
@@ -162,6 +168,7 @@ public abstract class AbstractLogInternalHandler<T> implements InitializableInte
     public void initialize() throws InitializationException
     {
         LOGGER.debug("Configuring the Common Log Internal Handler...");
+        super.initialize();
 
         // Check if we should disable the loggers
         if (this.logContext != null)
