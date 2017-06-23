@@ -41,6 +41,7 @@ public abstract class AbstractLogInternalHandler<T extends Serializable> extends
     public static final String MULE_HOME_PLACEHOLDER = "$MULE_HOME";
     public static final String PATTERN_LAYOUT = "%m%n";
     public static final int MB_CONVERSION_UNIT = 1024;
+
     private static final int DEFAULT_BUFFER_RETRY_COUNT = 3;
     private static final long DEFAULT_BUFFER_FLUSH_FREQUENCY = 10000L;
     private static final int DEFAULT_BUFFER_MAXIMUM_CAPACITY = 1000;
